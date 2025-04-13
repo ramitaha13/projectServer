@@ -46,45 +46,36 @@ client.on("connect", () => {
 
 // Function to validate data with safety checks
 function isValidData(data) {
-  // First check if data is an object
-  if (!data || typeof data !== "object") {
-    console.log(
-      `Error: Received data is not an object. Type: ${typeof data}, Value: ${data}`
-    );
-    return false;
+  const requiredFields = [
+    "temperature",
+    "Light",
+    "Soil humidity",
+    "humidity",
+    "Pressure",
+  ];
+
+  for (const field of requiredFields) {
+    if (!(field in data)) {
+      console.log(`Error: Missing field "${field}" in received data.`);
+      return false;
+    }
+    if (data[field] === null || data[field] === undefined) {
+      console.log(`Error: Field "${field}" is null or undefined.`);
+      return false;
+    }
   }
 
-  // Check if both temperature and Light properties exist
-  const hasTemperature =
-    "temperature" in data &&
-    data.temperature !== null &&
-    data.temperature !== undefined;
-  const hasLight =
-    "Light" in data && data.Light !== null && data.Light !== undefined;
-
-  if (!hasTemperature) {
-    console.log("Error: Temperature data missing or invalid");
-  }
-
-  if (!hasLight) {
-    console.log("Error: Light data missing or invalid");
-  }
-
-  return hasTemperature && hasLight;
+  return true;
 }
 
 // Function to save data to Firestore
 async function saveToFirestore(data) {
   try {
-    // Validate data first
     if (!isValidData(data)) {
-      console.log(
-        `⚠️ Invalid data. Missing temperature or Light values. Skipping Firestore save.`
-      );
+      console.log("⚠️ Invalid data. Skipping Firestore save.");
       return;
     }
 
-    // Skip saving if temperature is over 50
     if (data.temperature > 50) {
       console.log(
         `⚠️ Temperature too high (${data.temperature}°C). Skipping Firestore save.`
@@ -92,34 +83,32 @@ async function saveToFirestore(data) {
       return;
     }
 
-    // Add timestamp to the data
     const dataWithTimestamp = {
       ...data,
       timestamp: serverTimestamp(),
       receivedAt: new Date().toISOString(),
     };
 
-    // Save to Firestore
     const docRef = await addDoc(
       collection(db, "sensorData"),
       dataWithTimestamp
     );
     console.log(`✅ Data saved to Firestore with ID: ${docRef.id}`);
-    console.log(`Temperature: ${data.temperature}°C, Light: ${data.Light} lux`);
 
-    // Add humidity logging if it exists
-    if ("humidity" in data) {
-      console.log(`Humidity: ${data.humidity}`);
-    }
+    console.log("✅ Sensor Data:");
+    console.log(`• Temperature: ${data.temperature} °C`);
+    console.log(`• Light: ${data.Light} lux`);
+    console.log(`• Soil Humidity: ${data["Soil humidity"]}`);
+    console.log(`• Air Humidity: ${data.humidity}%`);
+    console.log(`• Air Pressure: ${data.Pressure} hPa`);
 
-    lastSaveTime = Date.now();
-
-    // Alert for high temperature (but below 50)
     if (data.temperature > 30) {
       console.log(`⚠️ HIGH TEMPERATURE ALERT: ${data.temperature}°C`);
     }
+
+    lastSaveTime = Date.now();
   } catch (error) {
-    console.error("Error saving to Firestore:", error);
+    console.error("❌ Error saving to Firestore:", error);
   }
 }
 
@@ -131,70 +120,62 @@ client.on("message", async (topic, message) => {
   );
 
   try {
-    // Parse the JSON data
     const data = JSON.parse(messageStr);
 
-    // Debug: Log the type and keys of data
-    console.log(`Data type: ${typeof data}`);
     if (typeof data === "object" && data !== null) {
-      console.log(`Data keys: ${Object.keys(data)}`);
+      console.log(`Received data keys: ${Object.keys(data)}`);
       latestData = data;
 
-      // Check if it's time to save (60 seconds since last save)
       const now = Date.now();
       if (now - lastSaveTime >= 60000) {
         await saveToFirestore(data);
       } else {
         console.log(
-          `Received data but waiting to save. Next save in ${Math.round(
+          `Waiting to save... Next save in ${Math.round(
             (60000 - (now - lastSaveTime)) / 1000
           )} seconds.`
         );
       }
     } else {
-      console.log(`Warning: Received non-object data: ${data}`);
+      console.log("⚠️ Received non-object data.");
     }
   } catch (error) {
-    console.error("Error processing message:", error);
+    console.error("❌ Error processing MQTT message:", error);
   }
 });
 
-// Set up interval to check and save data every 60 seconds
+// Auto-save every 60 seconds
 setInterval(async () => {
   const now = Date.now();
   if (latestData && now - lastSaveTime >= 60000) {
-    console.log("1 minute elapsed, saving data to Firestore...");
+    console.log("⏳ 1 minute passed, saving data...");
     try {
       await saveToFirestore(latestData);
     } catch (error) {
-      console.error("Error in scheduled save:", error);
+      console.error("❌ Error in scheduled save:", error);
     }
   }
-}, 1000); // Check every second, but only save if 60 seconds have passed
+}, 1000);
 
-// Error event handler
+// Error event handlers
 client.on("error", (err) => {
-  console.error("MQTT error:", err);
+  console.error("❌ MQTT error:", err);
 });
 
-// Reconnect event handler
 client.on("reconnect", () => {
-  console.log("Attempting to reconnect to MQTT broker...");
+  console.log("🔄 Reconnecting to MQTT broker...");
 });
 
-// Offline event handler
 client.on("offline", () => {
-  console.log("MQTT client is offline. Waiting to reconnect...");
+  console.log("📴 MQTT client is offline.");
 });
 
-// Handle graceful shutdown
+// Graceful shutdown
 process.on("SIGINT", () => {
-  console.log("Closing MQTT connection and exiting...");
+  console.log("🚦 Shutting down gracefully...");
   client.end();
   process.exit();
 });
 
-// Keep the process running
 process.stdin.resume();
-
-console.log("M5Stack MQTT to Firebase server started.");
+console.log("🚀 M5Stack MQTT to Firebase server started.");
